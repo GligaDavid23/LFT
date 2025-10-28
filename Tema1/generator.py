@@ -1,6 +1,7 @@
 import argparse
 import sys
-from collections import defaultdict, deque
+from collections import defaultdict
+import heapq
 from dataclasses import dataclass
 from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
@@ -106,16 +107,29 @@ def derive_strings(
     max_form_len = max_form_len or max_len + 4
 
     start_form = (grammar.start,)
-    queue = deque([start_form])
-    seen_forms: Set[Tuple[str, ...]] = {start_form}
+    heap: List[Tuple[int, int, int, Tuple[str, ...]]] = []
+    seen_forms: Set[Tuple[str, ...]] = set()
     emitted: Set[str] = set()
     steps = 0
+    counter = 0
 
-    while queue and steps < max_steps:
-        current_form = queue.popleft()
+    def enqueue(form: Tuple[str, ...]) -> None:
+        nonlocal counter
+        if form in seen_forms:
+            return
+        terminal_total = sum(1 for symbol in form if grammar.is_terminal(symbol))
+        if terminal_total > max_len or len(form) > max_form_len:
+            return
+        seen_forms.add(form)
+        heapq.heappush(heap, (terminal_total, len(form), counter, form))
+        counter += 1
+
+    enqueue(start_form)
+
+    while heap and steps < max_steps:
+        terminal_total, _, _, current_form = heapq.heappop(heap)
         steps += 1
 
-        terminal_total = sum(1 for symbol in current_form if grammar.is_terminal(symbol))
         if terminal_total > max_len or len(current_form) > max_form_len:
             continue
 
@@ -136,13 +150,7 @@ def derive_strings(
         for replacement in grammar.productions.get(target_symbol, []):
             next_form = current_form[:target_index] + replacement + current_form[target_index + 1 :]
 
-            next_terminal_total = sum(1 for symbol in next_form if grammar.is_terminal(symbol))
-            if next_terminal_total > max_len or len(next_form) > max_form_len:
-                continue
-            if next_form in seen_forms:
-                continue
-            seen_forms.add(next_form)
-            queue.append(next_form)
+            enqueue(next_form)
 
 
 def render_word(word: str) -> str:
@@ -160,7 +168,7 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     args = parser.parse_args(argv)
 
     grammar = parse_grammar(args.grammar)
-    leftmost = not args.rightmost  # implicit leftmost
+    leftmost = not args.rightmost
 
     for produced, word in enumerate(derive_strings(grammar, leftmost=leftmost), start=1):
         print(render_word(word))
