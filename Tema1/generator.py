@@ -8,8 +8,8 @@ from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 EPS_SYMBOLS = {"?", "epsilon", "eps", "lambda", "\u03bb"}
 
 DEFAULT_MAX_LEN = 60
-DEFAULT_COUNT = 20
-DEFAULT_MAX_STEPS = 100_000
+DEFAULT_COUNT = 60
+DEFAULT_MAX_STEPS = 200_000
 
 @dataclass(frozen=True)
 class Grammar:
