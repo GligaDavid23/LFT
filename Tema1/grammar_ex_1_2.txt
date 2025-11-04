@@ -1,9 +1,9 @@
 
-# Example 1.2 from modules: L = { a^n b^k : n>=1, k>=1 }
-N = S A B
-T = a b
-S = S
+# Gramatica expresii: E -> E + T | T ; T -> T * F | F ; F -> a | ( E )
+N = E T F
+T = a + * ( )
+S = E
 P:
-S -> a A
-A -> b B | a A
-B -> b | b B | λ
+E -> E + T | T
+T -> T * F | F
+F -> a | ( E )
