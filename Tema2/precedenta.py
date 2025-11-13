@@ -43,7 +43,7 @@ def build_matrix() -> dict:
             return
         cur = matrix.get((x, y))
         if cur and cur != val:
-            raise ValueError(f"Conflict on {(x, y)}: {cur} vs {val}")
+            raise ValueError(f"Conflict la {(x, y)}: {cur} vs {val}")
         matrix[(x, y)] = val
 
     for _, rhs in AUG_PRODS:
