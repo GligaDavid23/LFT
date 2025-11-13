@@ -1,69 +1,93 @@
+from pathlib import Path
 from typing import List, Sequence
 
-TERMINALS = ("a", "+", "*", "(", ")", "$")
-NONTERMINALS = ("E", "T", "F")
-SYMS = set(TERMINALS) | set(NONTERMINALS) | {"S'"}
 MARKERS = ("<.", "=.")
-START = "E"
-RAW_PRODS = [
-    ("E", ("E", "+", "T")),
-    ("E", ("T",)),
-    ("T", ("T", "*", "F")),
-    ("T", ("F",)),
-    ("F", ("a",)),
-    ("F", ("(", "E", ")")),
-]
-PRODS = [(i + 1, lhs, rhs) for i, (lhs, rhs) in enumerate(RAW_PRODS)]
-AUG_PRODS = RAW_PRODS + [("S'", ("$", START, "$"))]
+PRODS: List[tuple[int, str, tuple[str, ...]]] = []
+PRECEDENCE_MATRIX: dict[tuple[str, str], str] = {}
+START = ""
+BASE_DIR = Path(__file__).parent
+PROD_FILE = BASE_DIR / "productions.txt"
+TABLE_FILE = BASE_DIR / "precedence.txt"
 
 
-def propagate(front: bool) -> dict:
-    data = {s: set() for s in SYMS}
-    for t in TERMINALS:
-        data[t].add(t)
-    changed = True
-    while changed:
-        changed = False
-        for lhs, rhs in AUG_PRODS:
-            if not rhs:
-                continue
-            key = rhs[0] if front else rhs[-1]
-            add = {key} | data[key]
-            if add - data[lhs]:
-                data[lhs].update(add)
-                changed = True
-    return data
+def strip_comment(line: str) -> str:
+    return line.split("#", 1)[0].strip()
 
 
-def build_matrix() -> dict:
-    tini, tfin, matrix = propagate(True), propagate(False), {}
+def read_productions(path: Path) -> List[tuple[str, tuple[str, ...]]]:
+    if not path.exists():
+        raise FileNotFoundError(f"Nu gasesc {path}.")
+    prods: List[tuple[str, tuple[str, ...]]] = []
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = strip_comment(raw)
+        if not line:
+            continue
+        if "->" not in line:
+            raise ValueError(f"Lipseste '->' in linia: {raw}")
+        lhs_part, rhs_part = line.split("->", 1)
+        lhs = lhs_part.strip()
+        if lhs and lhs[0].isdigit():
+            lhs = lhs.split(".", 1)[-1].strip()
+        if not lhs:
+            raise ValueError(f"Membru stang invalid: {raw}")
+        rhs = tuple(rhs_part.strip().split())
+        prods.append((lhs, rhs))
+    if not prods:
+        raise ValueError("Fisierul de productii este gol.")
+    return prods
 
-    def put(x: str, y: str, val: str) -> None:
-        if y not in TERMINALS:
-            return
-        cur = matrix.get((x, y))
-        if cur and cur != val:
-            raise ValueError(f"Conflict la {(x, y)}: {cur} vs {val}")
-        matrix[(x, y)] = val
 
-    for _, rhs in AUG_PRODS:
-        for i in range(len(rhs) - 1):
-            x, y = rhs[i], rhs[i + 1]
-            put(x, y, "=.")
-            if y in NONTERMINALS or y == "S'":
-                for sym in tini[y]:
-                    if sym in TERMINALS:
-                        put(x, sym, "<.")
-            if x in NONTERMINALS or x == "S'":
-                targets = tini[y] | {y}
-                for left in tfin[x]:
-                    for sym in targets:
-                        if sym in TERMINALS:
-                            put(left, sym, ">.")
+def normalize_relation(value: str) -> str:
+    if not value:
+        return ""
+    text = value.strip().lower()
+    if not text or text in {"-", "_"}:
+        return ""
+    text = text.strip("()")
+    text = text.replace("egal", "=.")
+    if "accept" in text:
+        return ""
+    if "=." in text or text == "=":
+        return "=."
+    if "<." in text or text == "<":
+        return "<."
+    if ">." in text or text == ">":
+        return ">."
+    if "<" in text:
+        return "<."
+    if ">" in text:
+        return ">."
+    if "=" in text:
+        return "=."
+    return ""
+
+
+def read_precedence_table(path: Path) -> dict[tuple[str, str], str]:
+    if not path.exists():
+        raise FileNotFoundError(f"Nu gasesc {path}.")
+    lines = [strip_comment(raw) for raw in path.read_text(encoding="utf-8").splitlines()]
+    lines = [line for line in lines if line]
+    if len(lines) < 2:
+        raise ValueError("Tabela de precedenta trebuie sa aiba antet si cel putin un rand.")
+    header = lines[0].split()
+    if len(header) < 2:
+        raise ValueError("Antetul trebuie sa contina cel putin doua simboluri.")
+    columns = header[1:]
+    matrix: dict[tuple[str, str], str] = {}
+    for line in lines[1:]:
+        parts = line.split()
+        if len(parts) < 2:
+            continue
+        row_symbol, cells = parts[0], parts[1:]
+        if len(cells) < len(columns):
+            cells.extend([""] * (len(columns) - len(cells)))
+        for col, cell in zip(columns, cells):
+            rel = normalize_relation(cell)
+            if rel:
+                matrix[(row_symbol, col)] = rel
+    if not matrix:
+        raise ValueError("Tabela de precedenta nu contine relatii.")
     return matrix
-
-
-PRECEDENCE_MATRIX = build_matrix()
 
 
 def tokenize(expr: str) -> List[str]:
@@ -187,13 +211,21 @@ def print_trace(rows: Sequence[Sequence[str]]):
         print(fmt(row))
 
 
+def load_configuration(prod_path: Path = PROD_FILE, table_path: Path = TABLE_FILE):
+    global PRODS, START, PRECEDENCE_MATRIX
+    raw_prods = read_productions(prod_path)
+    PRODS = [(i + 1, lhs, rhs) for i, (lhs, rhs) in enumerate(raw_prods)]
+    START = raw_prods[0][0]
+    PRECEDENCE_MATRIX = read_precedence_table(table_path)
+
+
 def main():
+    load_configuration()
     default = "a*(a+a)"
     expr = input(f"Expresie de analizat [{default}]: ").strip() or default
     ok, rows = precedence_parse(expr)
     print()
     print_trace(rows)
-
     print()
     print("Rezultat:", "acceptat" if ok else "respins")
 
