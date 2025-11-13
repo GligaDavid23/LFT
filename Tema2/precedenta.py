@@ -224,9 +224,11 @@ def main():
     default = "a*(a+a)"
     expr = input(f"Expresie de analizat [{default}]: ").strip() or default
     ok, rows = precedence_parse(expr)
+    
     print()
     print_trace(rows)
     print()
+    
     print("Rezultat:", "acceptat" if ok else "respins")
 
 
