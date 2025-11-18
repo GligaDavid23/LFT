@@ -157,12 +157,12 @@ def action_description(code: str) -> str:
     if code == "acc":
         return "acceptare"
     if code.startswith("d"):
-        return f"deplasare -> starea {code[1:]}"
+        return f"d{code[1:]}"
     if code.startswith("r"):
         idx = int(code[1:])
         lhs, rhs = PRODUCTIONS[idx]
         rhs_str = " ".join(rhs)
-        return f"reducere r{idx}: {lhs} -> {rhs_str}"
+        return f"r{idx}: {lhs} -> {rhs_str}"
     return code
 
 
@@ -233,7 +233,7 @@ def print_trace(rows: Sequence[TraceRow]) -> None:
 
 def main() -> None:
     load_configuration()
-    default = "id+id*id"
+    default = "id+(id*id)"
     expr = input(f"Expresie de analizat [{default}]: ").strip() or default
     ok, trace = lr1_parse(expr)
     print()
