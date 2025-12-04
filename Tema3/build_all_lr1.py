@@ -13,6 +13,7 @@ BISON_OUTPUT = SCRIPT_DIR / "expr.output"
 GRAMMAR_FILE = SCRIPT_DIR / "expr.y"
 ACTIONS_OUT = SCRIPT_DIR / "lr1_actions.txt"
 GOTO_OUT = SCRIPT_DIR / "lr1_goto.txt"
+PRODUCTIONS_OUT = SCRIPT_DIR / "lr1_productions.txt"
 LR1_FILE = SCRIPT_DIR / "LR1.py"
 
 
@@ -71,6 +72,56 @@ def map_terminal_symbol(sym: str):
     if sym in {"+", "*", "(", ")"}:
         return sym
     return None
+
+
+def map_grammar_symbol(sym: str) -> str:
+    mapped = map_terminal_symbol(sym)
+    return mapped if mapped is not None else sym
+
+
+def parse_productions(path: Path):
+    if not path.exists():
+        print(f"Eroare: nu gasesc {path} ca sa extrag productiile.")
+        sys.exit(1)
+    lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
+    in_grammar = False
+    current_lhs = None
+    rules = []
+    for raw in lines:
+        line = raw.rstrip("\n")
+        if not in_grammar:
+            if line.strip() == "Grammar":
+                in_grammar = True
+            continue
+        if line.startswith("Terminals"):
+            break
+        stripped = line.strip()
+        if not stripped:
+            continue
+        m_full = re.match(r"^\s*(\d+)\s+([^\s:]+)\s*:\s*(.*)$", line)
+        if m_full:
+            rule_no = int(m_full.group(1))
+            current_lhs = m_full.group(2)
+            rhs_text = m_full.group(3).strip()
+            if rule_no != 0:
+                rules.append((rule_no, current_lhs, rhs_text))
+            continue
+        m_alt = re.match(r"^\s*(\d+)\s+\|\s*(.*)$", line)
+        if m_alt and current_lhs:
+            rule_no = int(m_alt.group(1))
+            rhs_text = m_alt.group(2).strip()
+            if rule_no != 0:
+                rules.append((rule_no, current_lhs, rhs_text))
+            continue
+    if not rules:
+        print("Eroare: nu am gasit nici o productie in sectiunea Grammar din expr.output.")
+        sys.exit(1)
+    productions = []
+    for _, lhs, rhs_text in sorted(rules, key=lambda x: x[0]):
+        rhs_tokens = rhs_text.split()
+        rhs = tuple(map_grammar_symbol(tok) for tok in rhs_tokens) if rhs_tokens else ("epsilon",)
+        productions.append((lhs, rhs))
+    return productions
 
 
 def parse_bison_output(path: Path):
@@ -150,6 +201,12 @@ def write_goto(states, goto_table, path: Path):
     print(f">>> Scris tabela de salt in {path}")
 
 
+def write_productions(productions, path: Path):
+    lines = [f"{lhs} -> {' '.join(rhs)}" for lhs, rhs in productions]
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print(f">>> Scris productiile in {path}")
+
+
 def run_lr1():
     if os.environ.get("SKIP_LR1"):
         print("SKIP_LR1 este setat; sar peste rularea LR1.py.")
@@ -166,10 +223,12 @@ def run_lr1():
 
 def main():
     run_bison()
+    productions = parse_productions(BISON_OUTPUT)
     states, action_table, goto_table = parse_bison_output(BISON_OUTPUT)
     if not states:
         print("Eroare: nu am gasit niciun 'state N' in expr.output.")
         sys.exit(1)
+    write_productions(productions, PRODUCTIONS_OUT)
     write_actions(states, action_table, ACTIONS_OUT)
     write_goto(states, goto_table, GOTO_OUT)
     run_lr1()
