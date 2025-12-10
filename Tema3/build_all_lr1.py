@@ -7,7 +7,7 @@ from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 MSYS2_BASH_CANDIDATES = [Path(r"C:\msys64\usr\bin\bash.exe"), Path(r"C:\msys64\usr\bin\bash")]
-TERMINALS = ["id", "+", "*", "(", ")", "$"]
+TERMINALS = ["id", "+", "-", "*", "(", ")", "$"]
 NONTERMINALS = ["E", "T", "F"]
 BISON_OUTPUT = SCRIPT_DIR / "expr.output"
 GRAMMAR_FILE = SCRIPT_DIR / "expr.y"
@@ -69,7 +69,7 @@ def map_terminal_symbol(sym: str):
         return "$"
     if sym.startswith("'") and sym.endswith("'") and len(sym) == 3:
         return sym[1]
-    if sym in {"+", "*", "(", ")"}:
+    if sym in {"+", "-","*", "(", ")"}:
         return sym
     return None
 

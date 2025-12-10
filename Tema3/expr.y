@@ -22,6 +22,7 @@
 
 E
     : E '+' T
+    | E '-' T
     | T
     ;
 
@@ -51,6 +52,8 @@ int yylex(void)
 
     if (c == '+')
         return '+';
+    if (c == '-')
+        return '-';
     if (c == '*')
         return '*';
     if (c == '(')

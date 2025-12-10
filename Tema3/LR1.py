@@ -124,7 +124,7 @@ def tokenize(expr: str) -> List[str]:
         if ch.isspace():
             i += 1
             continue
-        if ch in "+*()":
+        if ch in "+-*()":
             tokens.append(ch)
             i += 1
             continue
