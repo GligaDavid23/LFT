@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import itertools
 from pathlib import Path
 from typing import Dict, List, Sequence, Tuple
 
@@ -20,6 +21,9 @@ class TraceRow:
     stack: str
     remaining_input: str
     action: str
+    attr_stack: str
+    sem_action: str = ""
+    code: str = ""
 
 
 def strip_comment(line: str) -> str:
@@ -114,18 +118,18 @@ def load_configuration() -> None:
     GOTO_TABLE = read_goto_table(GOTO_FILE)
 
 
-def tokenize(expr: str) -> List[str]:
+def tokenize(expr: str) -> List[Tuple[str, str]]:
     if not expr:
         raise ValueError("Expresia nu poate fi vida.")
-    tokens: List[str] = []
+    tokens: List[Tuple[str, str]] = []
     i = 0
     while i < len(expr):
         ch = expr[i]
         if ch.isspace():
             i += 1
             continue
-        if ch in "+*()":
-            tokens.append(ch)
+        if ch in "+-*()":
+            tokens.append((ch, ch))
             i += 1
             continue
         if ch == "$":
@@ -134,23 +138,33 @@ def tokenize(expr: str) -> List[str]:
             j = i + 1
             while j < len(expr) and (expr[j].isalnum() or expr[j] == "_"):
                 j += 1
-            tokens.append("id")
+            lexeme = expr[i:j]
+            tokens.append(("id", lexeme))
             i = j
             continue
         if ch.isdigit():
             j = i + 1
             while j < len(expr) and expr[j].isdigit():
                 j += 1
-            tokens.append("id")
+            lexeme = expr[i:j]
+            tokens.append(("id", lexeme))
             i = j
             continue
         raise ValueError(f"Caracter necunoscut: '{ch}'")
-    tokens.append("$")
+    tokens.append(("$", "$"))
     return tokens
 
 
-def stack_to_string(stack: Sequence[Tuple[str, int]]) -> str:
-    return " ".join(f"{sym}{state}" for sym, state in stack)
+def stack_to_string(
+    stack: Sequence[Tuple[str, int]], attrs: Sequence[str]
+) -> str:
+    parts: List[str] = []
+    for (sym, state), attr in zip(stack, attrs):
+        if sym == "id" and attr:
+            parts.append(f"{attr} {state}")
+        else:
+            parts.append(f"{sym} {state}")
+    return " ".join(parts)
 
 
 def action_description(code: str) -> str:
@@ -166,85 +180,189 @@ def action_description(code: str) -> str:
     return code
 
 
-def lr1_parse(expr: str) -> Tuple[bool, List[TraceRow]]:
+temp_counter = itertools.count(1)
+
+
+def next_temp() -> str:
+    return f"t{next(temp_counter)}"
+
+
+def apply_semantic_action(prod_idx: int, rhs_attrs: List[str], lhs: str) -> Tuple[str, str, str]:
+    lhs, rhs = PRODUCTIONS[prod_idx]
+    # rhs_attrs are in the same order as rhs
+    if lhs == "E":
+        if rhs == ("E", "+", "T"):
+            res = next_temp()
+            return res, f"{res} = {rhs_attrs[0]} + {rhs_attrs[2]}", f"E.p={res}"
+        if rhs == ("E", "-", "T"):
+            res = next_temp()
+            return res, f"{res} = {rhs_attrs[0]} - {rhs_attrs[2]}", f"E.p={res}"
+        if rhs == ("T",):
+            return rhs_attrs[0], "", f"E.p={rhs_attrs[0]}"
+    if lhs == "T":
+        if rhs == ("T", "*", "F"):
+            res = next_temp()
+            return res, f"{res} = {rhs_attrs[0]} * {rhs_attrs[2]}", f"T.p={res}"
+        if rhs == ("F",):
+            return rhs_attrs[0], "", f"T.p={rhs_attrs[0]}"
+    if lhs == "F":
+        if rhs == ("(", "E", ")"):
+            return rhs_attrs[1], "", f"F.p={rhs_attrs[1]}"
+        if rhs == ("id",):
+            return rhs_attrs[0], "", f"F.p={rhs_attrs[0]}"
+    return "", "", ""
+
+
+def attr_stack_to_string(attrs: Sequence[str]) -> str:
+    return " ".join(a for a in attrs if a)
+
+
+def lr1_parse(expr: str) -> Tuple[bool, List[TraceRow], List[str]]:
     tokens = tokenize(expr)
     stack: List[Tuple[str, int]] = [STACK_START]
+    attr_stack: List[str] = [None]
     pos = 0
     trace: List[TraceRow] = []
+    generated_code: List[str] = []
 
     while True:
         state = stack[-1][1]
-        lookahead = tokens[pos] if pos < len(tokens) else "$"
-        action = ACTION_TABLE.get((state, lookahead))
-        stack_str = stack_to_string(stack)
-        remaining = "".join(tokens[pos:]) if pos < len(tokens) else "$"
+        lookahead_sym, lookahead_lexeme = tokens[pos] if pos < len(tokens) else ("$", "$")
+        action = ACTION_TABLE.get((state, lookahead_sym))
+        stack_str = stack_to_string(stack, attr_stack)
+        remaining = "".join(tok[1] for tok in tokens[pos:]) if pos < len(tokens) else "$"
+        attr_str = attr_stack_to_string(attr_stack)
+        code_text = ""
 
         if action is None:
-            trace.append(TraceRow(stack_str, remaining, "eroare (actiune nedefinita)"))
-            return False, trace
+            trace.append(
+                TraceRow(stack_str, remaining, "eroare (actiune nedefinita)", attr_str, "", code_text)
+            )
+            return False, trace, generated_code
 
-        trace.append(TraceRow(stack_str, remaining, action_description(action)))
+        desc = action_description(action)
 
         if action == "acc":
-            return True, trace
+            trace.append(TraceRow(stack_str, remaining, desc, attr_str, "", code_text))
+            return True, trace, generated_code
 
         if action.startswith("d"):
             next_state = int(action[1:])
-            stack.append((lookahead, next_state))
+            stack.append((lookahead_sym, next_state))
+            attr_stack.append(lookahead_lexeme if lookahead_sym == "id" else None)
             pos += 1
+            sem = f"[push({lookahead_lexeme})]" if lookahead_sym == "id" else ""
+            trace.append(TraceRow(stack_str, remaining, desc, attr_str, sem, code_text))
             continue
 
         if action.startswith("r"):
             prod_idx = int(action[1:])
             lhs, rhs = PRODUCTIONS[prod_idx]
             pop_count = len(rhs) if rhs != ("epsilon",) else 0
+            rhs_attrs: List[str] = []
             for _ in range(pop_count):
                 if len(stack) == 1:
                     raise ValueError("Stiva s-a golit neasteptat in timpul reducerii.")
                 stack.pop()
+                rhs_attrs.append(attr_stack.pop())
+            rhs_attrs.reverse()
+            lhs_attr, code_text, assignment = apply_semantic_action(prod_idx, rhs_attrs, lhs)
+            if code_text:
+                generated_code.append(code_text)
+            non_none_rhs = [a for a in rhs_attrs if a]
+            pop_ops = [f"{a}=pop()" for a in reversed(non_none_rhs)]
+            push_op = f"push({lhs_attr})" if lhs_attr else ""
+            ops = []
+            if pop_ops:
+                ops.extend(pop_ops)
+            if push_op:
+                ops.append(push_op)
+            if lhs == "F" and rhs == ("id",):
+                sem_action = f"{assignment} [push({lhs_attr})]"
+            else:
+                inner = "; ".join(ops) + (";" if ops else "")
+                bracket = f"[{inner}]" if inner else ""
+                sem_action = " ".join(x for x in (assignment, bracket) if x)
+            prev_state = stack[-1][1]
+            desc = f"r{prod_idx}=>{lhs}+TS({prev_state},{lhs})"
             goto_state = GOTO_TABLE.get((stack[-1][1], lhs))
             if goto_state is None:
                 trace.append(
-                    TraceRow(stack_to_string(stack), remaining, f"eroare TS({stack[-1][1]}, {lhs})")
+                    TraceRow(
+                        stack_to_string(stack, attr_stack),
+                        remaining,
+                        f"eroare TS({stack[-1][1]}, {lhs})",
+                        attr_stack_to_string(attr_stack),
+                        sem_action,
+                        code_text,
+                    )
                 )
-                return False, trace
+                return False, trace, generated_code
             stack.append((lhs, goto_state))
+            attr_stack.append(lhs_attr if lhs_attr else None)
+            trace.append(
+                TraceRow(
+                    stack_str,
+                    remaining,
+                    desc,
+                    attr_str,
+                    f"{sem_action}",
+                    code_text,
+                )
+            )
             continue
 
         raise ValueError(f"Actiune necunoscuta: {action}")
 
 
 def print_trace(rows: Sequence[TraceRow]) -> None:
-    headers = ("Stiva", "Cuvant de intrare", "Actiune")
+    headers = (
+        "Stiva APD",
+        "Cuvant de intrare",
+        "Actiune rezultata",
+        "Stiva atribute",
+        "Actiune generare de cod",
+        "Cod generat",
+    )
     widths = [len(h) for h in headers]
-    data = [(row.stack, row.remaining_input, row.action) for row in rows]
-    for stack_str, remaining, action in data:
+    data = [
+        (row.stack, row.remaining_input, row.action, row.attr_stack, row.sem_action, row.code)
+        for row in rows
+    ]
+    for stack_str, remaining, action, attrs, sem, code in data:
         widths[0] = max(widths[0], len(stack_str))
         widths[1] = max(widths[1], len(remaining))
         widths[2] = max(widths[2], len(action))
+        widths[3] = max(widths[3], len(attrs))
+        widths[4] = max(widths[4], len(sem))
+        widths[5] = max(widths[5], len(code))
 
-    def fmt_row(values: Tuple[str, str, str]) -> str:
+    def fmt_row(values: Tuple[str, str, str, str, str, str]) -> str:
         return " ".join(val.ljust(widths[i]) for i, val in enumerate(values))
 
     print(fmt_row(headers))
-    for stack_str, remaining, action in data:
-        print(fmt_row((stack_str, remaining, action)))
+    for stack_str, remaining, action, attrs, sem, code in data:
+        print(fmt_row((stack_str, remaining, action, attrs, sem, code)))
 
 
 def main() -> None:
     load_configuration()
-    default = "id+id*id"
+    default = "a1+a2*a3"
     try:
         expr_raw = input(f"Expresie de analizat [{default}]: ").strip()
     except EOFError:
         expr_raw = ""
         print()
     expr = expr_raw or default
-    ok, trace = lr1_parse(expr)
+    ok, trace, code_lines = lr1_parse(expr)
     print()
     print_trace(trace)
     print()
     print("Rezultat:", "acceptat" if ok else "respins")
+    if code_lines:
+        print("Cod intermediar generat:")
+        for line in code_lines:
+            print("  " + line)
 
 
 if __name__ == "__main__":
