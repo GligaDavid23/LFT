@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import itertools
 from pathlib import Path
-from typing import Dict, List, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 BASE_DIR = Path(__file__).parent
 PROD_FILE = BASE_DIR / "lr1_productions.txt"
@@ -224,6 +224,10 @@ def lr1_parse(expr: str) -> Tuple[bool, List[TraceRow], List[str]]:
     pos = 0
     trace: List[TraceRow] = []
     generated_code: List[str] = []
+    pending_code: str = ""
+
+    def should_flush_code(act: Optional[str]) -> bool:
+        return bool(act) and (act == "acc" or act.startswith("r"))
 
     while True:
         state = stack[-1][1]
@@ -232,18 +236,20 @@ def lr1_parse(expr: str) -> Tuple[bool, List[TraceRow], List[str]]:
         stack_str = stack_to_string(stack, attr_stack)
         remaining = "".join(tok[1] for tok in tokens[pos:]) if pos < len(tokens) else "$"
         attr_str = attr_stack_to_string(attr_stack)
-        code_text = ""
+        code_to_show = pending_code if should_flush_code(action) else ""
+        if should_flush_code(action):
+            pending_code = ""
 
         if action is None:
             trace.append(
-                TraceRow(stack_str, remaining, "eroare (actiune nedefinita)", attr_str, "", code_text)
+                TraceRow(stack_str, remaining, "eroare (actiune nedefinita)", attr_str, "", code_to_show)
             )
             return False, trace, generated_code
 
         desc = action_description(action)
 
         if action == "acc":
-            trace.append(TraceRow(stack_str, remaining, desc, attr_str, "", code_text))
+            trace.append(TraceRow(stack_str, remaining, desc, attr_str, "", code_to_show))
             return True, trace, generated_code
 
         if action.startswith("d"):
@@ -252,7 +258,7 @@ def lr1_parse(expr: str) -> Tuple[bool, List[TraceRow], List[str]]:
             attr_stack.append(lookahead_lexeme if lookahead_sym == "id" else None)
             pos += 1
             sem = f"[push({lookahead_lexeme})]" if lookahead_sym == "id" else ""
-            trace.append(TraceRow(stack_str, remaining, desc, attr_str, sem, code_text))
+            trace.append(TraceRow(stack_str, remaining, desc, attr_str, sem, code_to_show))
             continue
 
         if action.startswith("r"):
@@ -266,9 +272,10 @@ def lr1_parse(expr: str) -> Tuple[bool, List[TraceRow], List[str]]:
                 stack.pop()
                 rhs_attrs.append(attr_stack.pop())
             rhs_attrs.reverse()
-            lhs_attr, code_text, assignment = apply_semantic_action(prod_idx, rhs_attrs, lhs)
-            if code_text:
-                generated_code.append(code_text)
+            lhs_attr, new_code_text, assignment = apply_semantic_action(prod_idx, rhs_attrs, lhs)
+            if new_code_text:
+                generated_code.append(new_code_text)
+                pending_code = new_code_text
             non_none_rhs = [a for a in rhs_attrs if a]
             pop_ops = [f"{a}=pop()" for a in reversed(non_none_rhs)]
             push_op = f"push({lhs_attr})" if lhs_attr else ""
@@ -307,7 +314,7 @@ def lr1_parse(expr: str) -> Tuple[bool, List[TraceRow], List[str]]:
                     desc,
                     attr_str,
                     f"{sem_action}",
-                    code_text,
+                    code_to_show,
                 )
             )
             continue
